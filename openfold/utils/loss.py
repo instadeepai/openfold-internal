@@ -1192,16 +1192,17 @@ def find_structural_violations(
 ) -> Dict[str, torch.Tensor]:
     """Computes several checks for structural violations."""
 
+    print("bb1")
     # Compute between residue backbone violations of bonds and angles.
     connection_violations = between_residue_bond_loss(
         pred_atom_positions=atom14_pred_positions,
-        pred_atom_mask=batch["atom14_atom_exists"],
-        residue_index=batch["residue_index"],
-        aatype=batch["aatype"],
+        pred_atom_mask=batch["atom14_atom_exists"], #torch.Size([1, 92, 14])
+        residue_index=batch["residue_index"], #torch.Size([1, 92])
+        aatype=batch["aatype"], #torch.Size([1, 92])
         tolerance_factor_soft=violation_tolerance_factor,
         tolerance_factor_hard=violation_tolerance_factor,
     )
-
+    print("bb2")
     # Compute the Van der Waals radius for every atom
     # (the first letter of the atom name is the element type).
     # Shape: (N, 14).
@@ -1209,9 +1210,9 @@ def find_structural_violations(
         residue_constants.van_der_waals_radius[name[0]]
         for name in residue_constants.atom_types
     ]
-
+    print("bb3")
     atomtype_radius = atom14_pred_positions.new_tensor(atomtype_radius)
-
+    print("bb4")
     # TODO: Consolidate monomer/multimer modes
     asym_id = batch.get("asym_id")
     if asym_id is not None:
@@ -1227,7 +1228,7 @@ def find_structural_violations(
             batch["atom14_atom_exists"]
             * atomtype_radius[batch["residx_atom14_to_atom37"]]
         )
-
+    print("bb5")
     # Compute the between residue clash loss.
     between_residue_clashes = between_residue_clash_loss(
         atom14_pred_positions=atom14_pred_positions,
@@ -1238,13 +1239,14 @@ def find_structural_violations(
         overlap_tolerance_soft=clash_overlap_tolerance,
         overlap_tolerance_hard=clash_overlap_tolerance,
     )
-
+    print("bb6")
     # Compute all within-residue violations (clashes,
     # bond length and angle violations).
     restype_atom14_bounds = residue_constants.make_atom14_dists_bounds(
         overlap_tolerance=clash_overlap_tolerance,
         bond_length_tolerance_factor=violation_tolerance_factor,
     )
+    print("bb7")
     atom14_atom_exists = batch["atom14_atom_exists"]
     atom14_dists_lower_bound = atom14_pred_positions.new_tensor(
         restype_atom14_bounds["lower_bound"]
@@ -1259,7 +1261,7 @@ def find_structural_violations(
         atom14_dists_upper_bound=atom14_dists_upper_bound,
         tighten_bounds_for_loss=0.0,
     )
-
+    print("bb8")
     # Combine them to a single per-residue violation mask (used later for LDDT).
     per_residue_violations_mask = torch.max(
         torch.stack(
@@ -1492,7 +1494,7 @@ def compute_renamed_ground_truth(
           after renaming swaps are performed.
         renamed_atom14_gt_exists: Mask after renaming swap is performed.
     """
-
+    print("pp1")
     pred_dists = torch.sqrt(
         eps
         + torch.sum(
@@ -1504,7 +1506,7 @@ def compute_renamed_ground_truth(
             dim=-1,
         )
     )
-
+    print("pp2")
     atom14_gt_positions = batch["atom14_gt_positions"]
     gt_dists = torch.sqrt(
         eps
@@ -1517,7 +1519,7 @@ def compute_renamed_ground_truth(
             dim=-1,
         )
     )
-
+    print("pp3")
     atom14_alt_gt_positions = batch["atom14_alt_gt_positions"]
     alt_gt_dists = torch.sqrt(
         eps
@@ -1530,10 +1532,10 @@ def compute_renamed_ground_truth(
             dim=-1,
         )
     )
-
+    print("pp4")
     lddt = torch.sqrt(eps + (pred_dists - gt_dists) ** 2)
     alt_lddt = torch.sqrt(eps + (pred_dists - alt_gt_dists) ** 2)
-
+    print("pp5")
     atom14_gt_exists = batch["atom14_gt_exists"]
     atom14_atom_is_ambiguous = batch["atom14_atom_is_ambiguous"]
     mask = (
@@ -1542,7 +1544,7 @@ def compute_renamed_ground_truth(
         * atom14_gt_exists[..., None, :, None, :]
         * (1.0 - atom14_atom_is_ambiguous[..., None, :, None, :])
     )
-
+    print("pp6")
     per_res_lddt = torch.sum(mask * lddt, dim=(-1, -2, -3))
     alt_per_res_lddt = torch.sum(mask * alt_lddt, dim=(-1, -2, -3))
 
@@ -1688,72 +1690,74 @@ class AlphaFoldLoss(nn.Module):
     def __init__(self, config):
         super(AlphaFoldLoss, self).__init__()
         self.config = config
+        print("hello jq")
 
     def loss(self, out, batch, _return_breakdown=False):
         """
         Rename previous forward() as loss()
         so that can be reused in the subclass 
         """
+        # import pdb; pdb.set_trace()
+        print("hello loss")
+        print("bp1")
         if "violation" not in out.keys():
             out["violation"] = find_structural_violations(
                 batch,
-                out["sm"]["positions"][-1],
+                out["sm"]["positions"][-1], #torch.Size([1, 120, 14, 3])
                 **self.config.violation,
             )
-
+        print("bp2")
         if "renamed_atom14_gt_positions" not in out.keys():
-            batch.update(
-                compute_renamed_ground_truth(
-                    batch,
-                    out["sm"]["positions"][-1],
-                )
-            )
+            batch.update(compute_renamed_ground_truth(batch,out["sm"]["positions"][-1],))
+
+        print("bp3")
 
         loss_fns = {
             "distogram": lambda: distogram_loss(
                 logits=out["distogram_logits"],
                 **{**batch, **self.config.distogram},
             ),
-            "experimentally_resolved": lambda: experimentally_resolved_loss(
-                logits=out["experimentally_resolved_logits"],
-                **{**batch, **self.config.experimentally_resolved},
-            ),
+            # "experimentally_resolved": lambda: experimentally_resolved_loss(
+            #     logits=out["experimentally_resolved_logits"],
+            #     **{**batch, **self.config.experimentally_resolved},
+            # ),
             "fape": lambda: fape_loss(
                 out,
                 batch,
                 self.config.fape,
             ),
-            "plddt_loss": lambda: lddt_loss(
-                logits=out["lddt_logits"],
-                all_atom_pred_pos=out["final_atom_positions"],
-                **{**batch, **self.config.plddt_loss},
-            ),
-            "masked_msa": lambda: masked_msa_loss(
-                logits=out["masked_msa_logits"],
-                **{**batch, **self.config.masked_msa},
-            ),
-            "supervised_chi": lambda: supervised_chi_loss(
-                out["sm"]["angles"],
-                out["sm"]["unnormalized_angles"],
-                **{**batch, **self.config.supervised_chi},
-            ),
+            # "plddt_loss": lambda: lddt_loss( # TODO: Fix this
+            #     logits=out["lddt_logits"],
+            #     all_atom_pred_pos=out["final_atom_positions"],
+            #     **{**batch, **self.config.plddt_loss},
+            # ),
+            # "masked_msa": lambda: masked_msa_loss(
+            #     logits=out["masked_msa_logits"],
+            #     **{**batch, **self.config.masked_msa},
+            # ),
+            # "supervised_chi": lambda: supervised_chi_loss(
+            #     out["sm"]["angles"],
+            #     out["sm"]["unnormalized_angles"],
+            #     **{**batch, **self.config.supervised_chi},
+            # ),
             "violation": lambda: violation_loss(
                 out["violation"],
                 **{**batch, **self.config.violation},
             ),
         }
 
-        if self.config.tm.enabled:
-            loss_fns["tm"] = lambda: tm_loss(
-                logits=out["tm_logits"],
-                **{**batch, **out, **self.config.tm},
-            )
+        # if self.config.tm.enabled:
+        #     loss_fns["tm"] = lambda: tm_loss(
+        #         logits=out["tm_logits"],
+        #         **{**batch, **out, **self.config.tm},
+        #     )
 
-        if self.config.chain_center_of_mass.enabled:
-            loss_fns["chain_center_of_mass"] = lambda: chain_center_of_mass_loss(
-                all_atom_pred_pos=out["final_atom_positions"],
-                **{**batch, **self.config.chain_center_of_mass},
-            )
+        # if self.config.chain_center_of_mass.enabled:
+        #     loss_fns["chain_center_of_mass"] = lambda: chain_center_of_mass_loss(
+        #         all_atom_pred_pos=out["final_atom_positions"],
+        #         **{**batch, **self.config.chain_center_of_mass},
+        #     )
+        print("bp4")
 
         cum_loss = 0.
         losses = {}
@@ -1770,6 +1774,7 @@ class AlphaFoldLoss(nn.Module):
             cum_loss = cum_loss + weight * loss
             losses[loss_name] = loss.detach().clone()
         losses["unscaled_loss"] = cum_loss.detach().clone()
+        print("bp5")
 
         # Scale the loss by the square root of the minimum of the crop size and
         # the (average) sequence length. See subsection 1.9.
