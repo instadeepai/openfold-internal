@@ -927,6 +927,8 @@ class DataPipeline:
             If chain_id is None, it is assumed that there is only one chain
             in the object. Otherwise, a ValueError is thrown.
         """
+
+        # import pdb; pdb.set_trace()
         if chain_id is None:
             chains = mmcif.structure.get_chains()
             chain = next(chains, None)
@@ -936,7 +938,12 @@ class DataPipeline:
 
         mmcif_feats = make_mmcif_features(mmcif, chain_id)
 
-        input_sequence = mmcif.chain_to_seqres[chain_id]
+        input_sequence = mmcif.chain_to_seqres[chain_id] 
+        #AQVINTFDGVADYLQTYHKLPDNYITKSEAQALGWVASKGNLADVAPGKSIGGDIFSNREGKLPGKSGRTWREADINYTSGFRNSDRILYSSDWLAYKTTDHYQTFTKIR
+
+        #MPVRKAKAVWEGGLRQGKGVMELQSQAFQGPYSYPSRFEEGEGTNPEELIAAAHAGCFSMALAASLEREGFPPKRVSTEARVHLEVVDGKPTLTRIELLTEAEVPGISSEKFLEIAEAAKEGCPVSRALAGVKEVVLTARLV
+        #MPVRKAKAVWEGGLRQGKGVMELQSQAFQGPYSYPSRFEEGEGTNPEELIAAAHAGCFSMALAASLEREGFPPKRVSTEARVHLEVVDGKPTLTRIELLTEAEVPGISSEKFLEIAEAAKEGCPVSRALAGVKEVVLTARLV
+        
         hits = self._parse_template_hit_files(
             alignment_dir=alignment_dir,
             input_sequence=input_sequence,

@@ -364,7 +364,7 @@ config = mlc.ConfigDict(
                     "same_prob": 0.1,
                     "uniform_prob": 0.1,
                 },
-                "max_recycling_iters": 3,
+                "max_recycling_iters": 0, # changed from 3
                 "msa_cluster_features": True,
                 "reduce_msa_clusters_by_max_templates": False,
                 "resample_msa_in_recycling": True,
@@ -420,13 +420,13 @@ config = mlc.ConfigDict(
                 "fixed_size": True,
                 "subsample_templates": False,  # We want top templates.
                 "block_delete_msa": False,
-                "masked_msa_replace_fraction": 0.15,
+                "masked_msa_replace_fraction": 0.0, #from 0.15
                 "max_msa_clusters": 128,
                 "max_extra_msa": 1024,
                 "max_template_hits": 4,
                 "max_templates": 4,
-                "crop": False,
-                "crop_size": None,
+                "crop": True,
+                "crop_size": 150,
                 "spatial_crop_prob": None,
                 "interface_threshold": None,
                 "supervised": True,
@@ -436,14 +436,14 @@ config = mlc.ConfigDict(
                 "fixed_size": True,
                 "subsample_templates": True,
                 "block_delete_msa": True,
-                "masked_msa_replace_fraction": 0.15,
+                "masked_msa_replace_fraction": 0.0, #from 0.15
                 "max_msa_clusters": 128,
                 "max_extra_msa": 1024,
                 "max_template_hits": 4,
                 "max_templates": 4,
                 "shuffle_top_k_prefiltered": 20,
                 "crop": True,
-                "crop_size": 256,
+                "crop_size": 150, # TODO: change back to 256 ?
                 "spatial_crop_prob": 0.,
                 "interface_threshold": None,
                 "supervised": True,
@@ -792,7 +792,7 @@ multimer_config_update = mlc.ConfigDict({
                 ],
                 "true_msa": [NUM_MSA_SEQ, NUM_RES]
             },
-            "max_recycling_iters": 20,  # For training, value is 3
+            "max_recycling_iters": 0,  # changed from 20 # For training, value is 3
             "unsupervised_features": [
                     "aatype",
                     "residue_index",

@@ -41,37 +41,103 @@ from openfold.utils.import_weights import (
     import_openfold_weights_
 )
 from openfold.utils.logger import PerformanceLoggingCallback
+from transformers import AutoTokenizer, EsmForProteinFolding, BitsAndBytesConfig
+# from transformers import AutoModelForMaskedLM
+# from peft import PeftModel
+from openfold.utils.feats import atom14_to_atom37
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class OpenFoldWrapper(pl.LightningModule):
     def __init__(self, config):
         super(OpenFoldWrapper, self).__init__()
         self.config = config
-        self.model = AlphaFold(config)
+
+        self.use_esm = True
+
+        if self.use_esm:
+            
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            # no training
+            model_fold = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", low_cpu_mem_usage=False)
+
+            # far end of training
+            # model_fold = EsmForProteinFolding.from_pretrained("/home/j-quentin/bnt-vhh-modelling/notebooks/full_training_clustered_esm3B/merged_weights-checkpoint-118560/", low_cpu_mem_usage=False)
+
+            # far end of training
+            # model_fold = EsmForProteinFolding.from_pretrained("/home/j-quentin/bnt-vhh-modelling/notebooks/full_training_clustered_esm3B/merged_weights-checkpoint-3120/", low_cpu_mem_usage=False)
+
+            self.tokenizer_fold = AutoTokenizer.from_pretrained("facebook/esmfold_v1")
+
+            model_fold = model_fold.to(device)
+
+            self.model = model_fold
+
+            # just to check
+            self.model.requires_grad_(True)
+            self.model.esm.requires_grad_(False)
+
+        else:
+            self.model = AlphaFold(config)
+            # self.model = None
+
+
         self.is_multimer = self.config.globals.is_multimer
+        # import pdb;pdb.set_trace()
 
         self.loss = AlphaFoldLoss(config.loss)
 
         self.ema = ExponentialMovingAverage(
             model=self.model, decay=config.ema.decay
         )
+        # self.ema=None
         
         self.cached_weights = None
         self.last_lr_step = -1
         self.save_hyperparameters()
 
     def forward(self, batch):
-        return self.model(batch)
+
+        if self.use_esm:
+
+            # if batch["sequence"].shape!=torch.Size([1, 1, 120, 1]):
+            #     raise NotImplementedError
+            
+
+            outputs = self.model(batch["sequence"].squeeze(-1).squeeze(0))
+            outputs["sm"] = {}
+            # outputs["sm"]["frames"] = outputs["frames"].repeat(1, 1, 8, 1)
+            # outputs["sm"]["sidechain_frames"] = outputs["sidechain_frames"].repeat(1, 1, 8, 1, 1, 1)
+            # outputs["sm"]["positions"] = outputs["positions"].repeat(1, 1, 8, 1, 1)
+
+            outputs["sm"]["frames"] = outputs["frames"] #torch.Size([8, 1, 120, 7])
+            outputs["sm"]["sidechain_frames"] = outputs["sidechain_frames"] #torch.Size([8, 1, 120, 8, 4, 4])
+            outputs["sm"]["positions"] = outputs["positions"] #torch.Size([8, 1, 120, 14, 3])
+            outputs["sm"]["angles"] = outputs["angles"]
+            outputs["sm"]["unnormalized_angles"] = outputs["unnormalized_angles"]
+            
+
+            # outputs["unnormalized_angles"] #torch.Size([8, 1, 120, 7, 2])
+            # outputs["unnormalized_angles"]
+            # outputs["angles"] #torch.Size([8, 1, 120, 7, 2])
+            # outputs["lddt_head"] #torch.Size([8, 1, 120, 37, 50])
+            return outputs
+        
+        else:
+            return self.model(batch)
+
 
     def _log(self, loss_breakdown, batch, outputs, train=True):
         phase = "train" if train else "val"
         for loss_name, indiv_loss in loss_breakdown.items():
+            print(f"{phase}/{loss_name}_epoch {indiv_loss}")
+
             self.log(
-                f"{phase}/{loss_name}", 
-                indiv_loss, 
-                prog_bar=(loss_name == 'loss'),
-                on_step=train, on_epoch=(not train), logger=True, sync_dist=False,
-            )
+                    f"{phase}/{loss_name}", 
+                    indiv_loss, 
+                    prog_bar=(loss_name == 'loss'),
+                    on_step=train, on_epoch=(not train), logger=True, sync_dist=False,
+                )
 
             if(train):
                 self.log(
@@ -80,12 +146,16 @@ class OpenFoldWrapper(pl.LightningModule):
                     on_step=False, on_epoch=True, logger=True, sync_dist=False,
                 )
 
+        
         with torch.no_grad():
+            print("running other metrics")
             other_metrics = self._compute_validation_metrics(
                 batch, 
                 outputs,
                 superimposition_metrics=(not train)
             )
+            print("ran other metrics")
+            
 
         for k,v in other_metrics.items():
             self.log(
@@ -94,31 +164,86 @@ class OpenFoldWrapper(pl.LightningModule):
                 prog_bar = (k == 'loss'),
                 on_step=False, on_epoch=True, logger=True, sync_dist=False,
             )
+            print(f"{phase}/{k} {torch.mean(v)}")
 
     def training_step(self, batch, batch_idx):
+
+        
+        #batch["all_atom_mask"][0,:92,0,0] # test
+        #batch["seq_length"]
+        # batch["true_msa"][0,0,:100,0]
+
+        
+
+        # TODO:
+        # add violations and other loss back
+        # figure out why sequence input changes
+        # quick fix
+        # print(batch["sequence"].shape)
+        # if batch["sequence"].shape!=torch.Size([1, 1, 120, 1]):
+        #     return None
+        
+        # test = next(self.model.distogram_head.parameters())
+        # print("disto params")
+        # print(test[1,:3])
+        # check that model params are being updated
+
+        
+        # import pdb; pdb.set_trace()
+        
+        # for param in self.model.esm.contact_head.regression.parameters():
+        #     print(param.requires_grad)
+        # self.model.esm.requires_grad_(True)
+        # for param in self.model.esm.contact_head.regression.parameters():
+        #     print(param.requires_grad)
+
+
         if(self.ema.device != batch["aatype"].device):
             self.ema.to(batch["aatype"].device)
 
         ground_truth = batch.pop('gt_features', None)
 
-        # Run the model
-        outputs = self(batch)
+        # need to add padding to 256 here
+        if self.use_esm:
+
+            outputs = self(batch)
+
+            feats = tensor_tree_map(lambda t: t[..., -1], batch) # we don't use recylcing so we just take last batch input
+            outputs["final_atom_positions"] = atom14_to_atom37(outputs["sm"]["positions"][-1], outputs)
+
+            #  batch["sequence"].shape # torch.Size([1, 1, 120])
+            # outputs["sm"]["positions"][-1] # torch.Size([1, 120, 14, 3])
+
+
+        else:
+            outputs = self(batch)
+            # outputs["sm"]["frames"].shape gives torch.Size([8, 1, 120, 7])
+            # outputs["sm"]["sidechain_frames"].shape gives 
+            # outputs["sm"]["positions"].shape gives 
+            
+            # outputs["lddt_logits"].shape gives torch.Size([1, 120, 50])
+            # outputs["masked_msa_logits"] # torch.Size([1, 128, 120, 23]) # we don't care for ESMFOLD
+            # outputs["experimentally_resolved_logits"].shape gives torch.Size([1, 120, 37])
+
 
         # Remove the recycling dimension
         batch = tensor_tree_map(lambda t: t[..., -1], batch)
 
-        if self.is_multimer:
-            batch = multi_chain_permutation_align(out=outputs,
-                                                  features=batch,
-                                                  ground_truth=ground_truth)
+        # if self.is_multimer:
+        #     batch = multi_chain_permutation_align(out=outputs,
+        #                                           features=batch,
+        #                                           ground_truth=ground_truth)
 
         # Compute loss
-        loss, loss_breakdown = self.loss(
-            outputs, batch, _return_breakdown=True
-        )
-
+        loss, loss_breakdown = self.loss(outputs, batch, _return_breakdown=True)
+        # import pdb; pdb.set_trace()
         # Log it
+        # print(loss)
+
+        # TODO: add later
         self._log(loss_breakdown, batch, outputs)
+
+        # import pdb; pdb.set_trace()
 
         return loss
 
@@ -127,26 +252,47 @@ class OpenFoldWrapper(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         # At the start of validation, load the EMA weights
-        if(self.cached_weights is None):
-            # model.state_dict() contains references to model weights rather
-            # than copies. Therefore, we need to clone them before calling 
-            # load_state_dict().
-            clone_param = lambda t: t.detach().clone()
-            self.cached_weights = tensor_tree_map(clone_param, self.model.state_dict())
-            self.model.load_state_dict(self.ema.state_dict()["params"])
+        print("validation step called")
+        print(batch["atom14_gt_positions"].shape)
+        # batch.update(compute_renamed_ground_truth(batch,outputs["sm"]["positions"][-1],))
+        # batch["atom14_gt_positions"].shape gives torch.Size([1, 92, 14, 3])
+        # batch["atom14_alt_gt_positions"].shape gives torch.Size([1, 92, 14, 3])
+
+
+        # if(self.cached_weights is None):
+        #     # model.state_dict() contains references to model weights rather
+        #     # than copies. Therefore, we need to clone them before calling 
+        #     # load_state_dict().
+        #     clone_param = lambda t: t.detach().clone()
+        #     self.cached_weights = tensor_tree_map(clone_param, self.model.state_dict())
+        #     self.model.load_state_dict(self.ema.state_dict()["params"])
+
+        # import pdb; pdb.set_trace()
+        # batch["sequence"].shape is torch.Size([1, 1, 120, 1]) different
+
+
 
         ground_truth = batch.pop('gt_features', None)
-
+ 
         # Run the model
-        outputs = self(batch)
+        if self.use_esm:
+
+            outputs = self(batch)
+
+            feats = tensor_tree_map(lambda t: t[..., -1], batch) # we don't use recylcing so we just take last batch input
+            outputs["final_atom_positions"] = atom14_to_atom37(outputs["sm"]["positions"][-1], outputs)
+
+        else:
+            outputs = self(batch)
+
         batch = tensor_tree_map(lambda t: t[..., -1], batch)
 
         batch["use_clamped_fape"] = 0.
 
-        if self.is_multimer:
-            batch = multi_chain_permutation_align(out=outputs,
-                                                  features=batch,
-                                                  ground_truth=ground_truth)
+        # if self.is_multimer:
+        #     batch = multi_chain_permutation_align(out=outputs,
+        #                                           features=batch,
+        #                                           ground_truth=ground_truth)
 
         # Compute loss and other metrics
         _, loss_breakdown = self.loss(
@@ -154,11 +300,16 @@ class OpenFoldWrapper(pl.LightningModule):
         )
 
         self._log(loss_breakdown, batch, outputs, train=False)
+
+        print("validation step done")
         
     def on_validation_epoch_end(self):
         # Restore the model weights to normal
-        self.model.load_state_dict(self.cached_weights)
-        self.cached_weights = None
+
+        # TODO: look into this
+        # self.model.load_state_dict(self.cached_weights)
+        # self.cached_weights = None
+        return
 
     def _compute_validation_metrics(self, 
         batch, 
@@ -218,6 +369,9 @@ class OpenFoldWrapper(pl.LightningModule):
         learning_rate: float = 1e-3,
         eps: float = 1e-5,
     ) -> torch.optim.Adam:
+
+        # learning_rate=0.01
+
         # Ignored as long as a DeepSpeed optimizer is configured
         optimizer = torch.optim.Adam(
             self.model.parameters(), 
@@ -318,7 +472,7 @@ def main(args):
                 # Loading from pre-trained model
                 sd = {'model.'+k: v for k, v in sd.items()}
                 import_openfold_weights_(model=model_module, state_dict=sd)
-            logging.info("Successfully loaded model weights...")
+            # logging.info("Successfully loaded model weights...")
 
         else:  # Loads a checkpoint to start from a specific time step
             if os.path.isdir(args.resume_from_ckpt):
@@ -327,7 +481,7 @@ def main(args):
                 sd = torch.load(args.resume_from_ckpt)
             last_global_step = int(sd['global_step'])
             model_module.resume_last_lr_step(last_global_step)
-            logging.info("Successfully loaded last lr step...")
+            # logging.info("Successfully loaded last lr step...")
 
     if args.resume_from_jax_params:
         model_module.load_from_jax(args.resume_from_jax_params)
@@ -409,6 +563,33 @@ def main(args):
             **{"entity": args.wandb_entity}
         )
         loggers.append(wdb_logger)
+    else:
+        # from pytorch_lightning import Trainer
+        from pytorch_lightning.loggers import NeptuneLogger
+
+        # arguments made to NeptuneLogger are passed on to the neptune.experiments.Experiment class
+        # We are using an api_key for the anonymous user "neptuner" but you can use your own.
+        neptune_logger = NeptuneLogger(
+            api_key='eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI0NGQwNTE3My02ZTZlLTRiYzAtODBkZi1mZjA5ZWQ2ZTNlYzYifQ',
+            project_name='InstaDeep/vhh',
+        #     # experiment_name='default',  # Optional,
+        #     # params={'max_epochs': 10},  # Optional,
+        #     # tags=['pytorch-lightning', 'mlp']  # Optional,
+        )
+        # trainer = Trainer(max_epochs=10, logger=neptune_logger)
+
+        # neptune_callback = NeptuneCallback(
+        #     project="InstaDeep/vhh", 
+        #     api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI0NGQwNTE3My02ZTZlLTRiYzAtODBkZi1mZjA5ZWQ2ZTNlYzYifQ==", 
+        # )    
+        # loggers.append(neptune_logger)
+
+
+        import logging
+
+        logger = logging.getLogger("root_experiment")
+        logger.setLevel(logging.DEBUG)
+        loggers.append(logger)
 
     cluster_environment = MPIEnvironment() if args.mpi_plugin else None
     if(args.deepspeed_config_path is not None):
@@ -435,7 +616,7 @@ def main(args):
     trainer_args = {k: v for k, v in vars(args).items() if k in trainer_kws}
     trainer_args.update({
         'default_root_dir': args.output_dir,
-        'strategy': strategy,
+        'strategy': "auto", #changed here
         'callbacks': callbacks,
         'logger': loggers,
     })
@@ -450,8 +631,21 @@ def main(args):
     trainer.fit(
         model_module, 
         datamodule=data_module,
-        ckpt_path=ckpt_path,
+        ckpt_path=ckpt_path
     )
+
+    outputdir = args.output_dir
+    # create a folder in outputdir based on date
+    # save the model in that folder
+    import datetime
+    date = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    outputdir = os.path.join(outputdir, date)
+    os.makedirs(outputdir, exist_ok=True)
+
+    model_module.model.save_pretrained(os.path.join(outputdir, "last_checkpoint"), from_pt=True)
+    # del model_module # to free up memory
+
+    # model_fold = EsmForProteinFolding.from_pretrained(os.path.join(outputdir, "last_checkpoint"), low_cpu_mem_usage=False)
 
 
 def bool_type(bool_str: str):
