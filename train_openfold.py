@@ -59,13 +59,13 @@ class OpenFoldWrapper(pl.LightningModule):
             
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             # no training
-            # model_fold = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", low_cpu_mem_usage=False)
+            model_fold = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", low_cpu_mem_usage=False)
 
             # far end of training
             # model_fold = EsmForProteinFolding.from_pretrained("/home/j-quentin/bnt-vhh-modelling/notebooks/full_training_clustered_esm3B/merged_weights-checkpoint-118560/", low_cpu_mem_usage=False)
 
             # far end of training
-            model_fold = EsmForProteinFolding.from_pretrained("/home/j-quentin/bnt-vhh-modelling/notebooks/full_training_clustered_esm3B/merged_weights-checkpoint-3120/", low_cpu_mem_usage=False)
+            # model_fold = EsmForProteinFolding.from_pretrained("/home/j-quentin/bnt-vhh-modelling/notebooks/full_training_clustered_esm3B/merged_weights-checkpoint-3120/", low_cpu_mem_usage=False)
 
             self.tokenizer_fold = AutoTokenizer.from_pretrained("facebook/esmfold_v1")
 

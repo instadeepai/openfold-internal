@@ -55,7 +55,8 @@ class ExponentialMovingAverage:
         module. The module should have the same structure as that used to
         initialize the ExponentialMovingAverage object.
         """
-        self._update_state_dict_(model.state_dict(), self.params)
+        # self._update_state_dict_(model.state_dict(), self.params)
+        print("bypass_upadte_moving_average")
 
     def load_state_dict(self, state_dict: OrderedDict) -> None:
         for k in state_dict["params"].keys():
